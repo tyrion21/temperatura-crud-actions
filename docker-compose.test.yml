@@ -8,18 +8,17 @@ services:
       - "8082:8081"  # Puerto externo 8082 para evitar conflictos
     environment:
       - SPRING_PROFILES_ACTIVE=test
-      - SPRING_DATASOURCE_URL=jdbc:sqlserver://host.docker.internal:1433;databaseName=temperatura_test_db;encrypt=true;trustServerCertificate=true
+      - SPRING_DATASOURCE_URL=jdbc:sqlserver://localhost:1433;databaseName=temperatura_test_db;encrypt=true;trustServerCertificate=true
       - SPRING_DATASOURCE_USERNAME=sa
       - SPRING_DATASOURCE_PASSWORD=j1s0n2108*
       - JAVA_OPTS=-Xmx512m -Xms256m
+    network_mode: "host"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
-    depends_on:
-      - wait-for-db
 
   temperatura-frontend:
     image: ${DOCKER_FRONTEND_IMAGE:-jasonhermida/temperatura-frontend:latest}
@@ -28,6 +27,7 @@ services:
       - "3001:3000"  # Puerto externo 3001 para evitar conflictos
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8082
+    network_mode: "host"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
       interval: 30s
@@ -36,22 +36,3 @@ services:
       start_period: 30s
     depends_on:
       - temperatura-backend
-
-  wait-for-db:
-    image: mcr.microsoft.com/mssql-tools
-    container_name: wait-for-db-${COMPOSE_PROJECT_NAME:-test}
-    command: >
-      bash -c "
-        echo 'Waiting for SQL Server to be ready...'
-        until /opt/mssql-tools/bin/sqlcmd -S host.docker.internal -U sa -P 'j1s0n2108*' -Q 'SELECT 1' > /dev/null 2>&1; do
-          echo 'SQL Server is not ready yet...'
-          sleep 5
-        done
-        echo 'SQL Server is ready!'
-      "
-    depends_on: []
-
-networks:
-  default:
-    driver: bridge
-    name: temperatura-test-network-${COMPOSE_PROJECT_NAME:-test}

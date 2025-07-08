@@ -284,21 +284,6 @@ jobs:
     needs: [build-docker-images]
     # Security scan corre en paralelo sin bloquear
     
-    services:
-      mssql:
-        image: mcr.microsoft.com/mssql/server:2022-latest
-        env:
-          ACCEPT_EULA: Y
-          SA_PASSWORD: j1s0n2108*
-          MSSQL_PID: Express
-        ports:
-          - 1433:1433
-        options: >-
-          --health-cmd="/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P j1s0n2108* -Q 'SELECT 1'"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -308,10 +293,30 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y docker-compose
         
-    - name: Wait for SQL Server
+    - name: Start SQL Server for tests
       run: |
+        echo "Starting SQL Server for integration tests..."
+        docker run -d \
+          --name mssql-integration \
+          -e ACCEPT_EULA=Y \
+          -e SA_PASSWORD=j1s0n2108* \
+          -e MSSQL_PID=Express \
+          -p 1433:1433 \
+          mcr.microsoft.com/mssql/server:2022-latest
+        
+        # Wait for SQL Server to be ready
         echo "Waiting for SQL Server to be ready..."
-        timeout 60 bash -c 'until docker exec $(docker ps -qf "ancestor=mcr.microsoft.com/mssql/server:2022-latest") /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "SELECT 1"; do sleep 5; done'
+        for i in {1..20}; do
+          if docker exec mssql-integration /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "SELECT 1" > /dev/null 2>&1; then
+            echo "SQL Server is ready!"
+            break
+          fi
+          echo "Waiting for SQL Server... attempt $i/20"
+          sleep 10
+        done
+        
+        # Create test database
+        docker exec mssql-integration /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "CREATE DATABASE temperatura_test_db"
         
     - name: Run Integration Tests
       run: |
@@ -339,30 +344,25 @@ jobs:
         # Check container status
         docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml ps
         
+        # Make healthcheck script executable
+        chmod +x ./healthcheck.sh
+        source ./healthcheck.sh
+        
         # Test backend health
-        echo "Testing backend health endpoint..."
-        for i in {1..10}; do
-          echo "Attempt $i to connect to backend..."
-          if curl -f http://localhost:8082/actuator/health; then
-            echo "Backend is healthy!"
-            break
-          fi
-          sleep 10
-        done
+        check_service "http://localhost:8082/actuator/health" "Backend"
         
         # Test frontend
-        echo "Testing frontend endpoint..."
-        for i in {1..10}; do
-          echo "Attempt $i to connect to frontend..."
-          if curl -f http://localhost:3001; then
-            echo "Frontend is healthy!"
-            break
-          fi
-          sleep 10
-        done
+        check_service "http://localhost:3001" "Frontend"
         
         # Clean up
         docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml down --remove-orphans
+        
+    - name: Cleanup SQL Server
+      if: always()
+      run: |
+        echo "Cleaning up SQL Server..."
+        docker stop mssql-integration || true
+        docker rm mssql-integration || true
 
   deploy-staging:
     runs-on: ubuntu-latest
