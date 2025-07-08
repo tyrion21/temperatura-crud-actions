@@ -381,11 +381,11 @@ jobs:
         
         # Test backend health
         echo "🔍 Testing backend health..."
-        check_service "http://localhost:8082/actuator/health" "Backend"
+        check_service "http://localhost:8081/actuator/health" "Backend"
         
         # Test frontend
         echo "🔍 Testing frontend health..."
-        check_service "http://localhost:3001" "Frontend"
+        check_service "http://localhost:3000" "Frontend"
         
         echo "✅ Integration tests completed successfully!"
         

@@ -4,8 +4,6 @@ services:
   temperatura-backend:
     image: ${DOCKER_BACKEND_IMAGE:-jasonhermida/temperatura-backend:latest}
     container_name: temperatura-backend-${COMPOSE_PROJECT_NAME:-test}
-    ports:
-      - "8082:8081"  # Puerto externo 8082 para evitar conflictos
     environment:
       - SPRING_PROFILES_ACTIVE=test
       - SPRING_DATASOURCE_URL=jdbc:sqlserver://localhost:1433;databaseName=temperatura_test_db;encrypt=true;trustServerCertificate=true
@@ -23,10 +21,8 @@ services:
   temperatura-frontend:
     image: ${DOCKER_FRONTEND_IMAGE:-jasonhermida/temperatura-frontend:latest}
     container_name: temperatura-frontend-${COMPOSE_PROJECT_NAME:-test}
-    ports:
-      - "3001:3000"  # Puerto externo 3001 para evitar conflictos
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8082
+      - NEXT_PUBLIC_API_URL=http://localhost:8081
     network_mode: "host"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000"]
