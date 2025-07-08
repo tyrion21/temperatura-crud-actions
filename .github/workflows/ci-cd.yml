@@ -180,8 +180,7 @@ jobs:
   build-docker-images:
     runs-on: ubuntu-latest
     name: Build Docker Images
-    needs: [build-backend, build-frontend]
-    # Removido security-scan de dependencies para acelerar el pipeline
+    # Removemos la dependencia de los jobs anteriores para hacerlo más robusto
     
     strategy:
       matrix:
@@ -191,19 +190,47 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Download Backend Artifacts
+    # Para backend
+    - name: Set up JDK 17 (for backend)
       if: matrix.component == 'backend'
-      uses: actions/download-artifact@v4
+      uses: actions/setup-java@v4
       with:
-        name: backend-jar
-        path: backend/target/
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
         
-    - name: Download Frontend Artifacts
-      if: matrix.component == 'frontend'
-      uses: actions/download-artifact@v4
+    - name: Cache Maven dependencies (for backend)
+      if: matrix.component == 'backend'
+      uses: actions/cache@v4
       with:
-        name: frontend-build
-        path: frontend/.next/
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Build Backend JAR
+      if: matrix.component == 'backend'
+      working-directory: ./backend
+      run: |
+        echo "Building backend JAR for Docker..."
+        mvn clean package -DskipTests
+        ls -la target/
+        
+    # Para frontend  
+    - name: Set up Node.js (for frontend)
+      if: matrix.component == 'frontend'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+        
+    - name: Build Frontend
+      if: matrix.component == 'frontend'
+      working-directory: ./frontend
+      run: |
+        echo "Building frontend for Docker..."
+        npm ci
+        npm run build
+        ls -la .next/
         
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
