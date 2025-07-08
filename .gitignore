@@ -166,7 +166,10 @@ dist
 # GATSBY FILES
 # ======================
 .cache/
-public
+# public (Gatsby builds - but allow frontend/public)
+
+# Allow frontend public folder
+!frontend/public/
 
 # ======================
 # VUEPRESS BUILD OUTPUT
