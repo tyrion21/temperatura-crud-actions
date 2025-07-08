@@ -492,7 +492,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Deploy to Production
     needs: [deploy-staging]
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
     
     environment:
       name: production
@@ -587,7 +587,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     name: Cleanup
-    needs: [deploy-production]
+    needs: [deploy-staging, deploy-production]
     if: always()
     
     steps:
