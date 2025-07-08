@@ -63,11 +63,12 @@ jobs:
         
     - name: Publish Test Results
       uses: dorny/test-reporter@v1
-      if: always()
+      if: always() && hashFiles('backend/target/surefire-reports/*.xml') != ''
       with:
         name: Backend Tests
         path: backend/target/surefire-reports/*.xml
         reporter: java-junit
+        fail-on-error: false
 
   build-frontend:
     runs-on: ubuntu-latest
@@ -82,7 +83,7 @@ jobs:
       with:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
-        cache-dependency-path: frontend/package-lock.json
+        cache-dependency-path: frontend/package.json
         
     - name: Install Frontend Dependencies
       working-directory: ./frontend
