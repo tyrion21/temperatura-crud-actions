@@ -302,7 +302,7 @@ jobs:
           -e SA_PASSWORD=j1s0n2108* \
           -e MSSQL_PID=Express \
           -p 1433:1433 \
-          mcr.microsoft.com/mssql/server:2022-latest
+          mcr.microsoft.com/mssql/server:2019-latest
         
         # Wait for SQL Server to be ready
         echo "Waiting for SQL Server to be ready..."
