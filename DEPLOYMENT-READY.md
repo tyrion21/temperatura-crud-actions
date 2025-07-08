@@ -1,53 +1,101 @@
-# 🚀 Proyecto Listo para Deployment
+# 🚀 Estado Actual del Pipeline CI/CD - Temperatura CRUD
 
-## 📋 Estado Actual
+## 🚀 Últimos Cambios Realizados
 
-El proyecto **Temperatura CRUD Actions** ha sido completamente configurado y está listo para ser desplegado usando GitHub Actions. Todos los componentes necesarios han sido implementados y verificados localmente.
+### Problema Identificado
+Los integration tests estaban fallando debido a problemas de conectividad con SQL Server:
+- GitHub Actions services no funcionaban correctamente con host.docker.internal
+- La configuración de red era compleja e inconsistente
+- Los healthchecks no eran lo suficientemente robustos
 
-## ✅ Verificaciones Completadas
+### Solución Implementada
 
-### Backend (Spring Boot)
-- ✅ Compilación exitosa con Maven
-- ✅ Configuración de JPA y SQL Server
-- ✅ Dockerfile multi-stage optimizado
-- ✅ Configuración de perfiles (dev, test, prod)
-- ✅ Health checks implementados
+1. **Simplificación del SQL Server Setup**
+   - Eliminado el servicio SQL Server de GitHub Actions services
+   - Implementado contenedor SQL Server standalone con mejor configuración
+   - Creación explícita de base de datos de test (`temperatura_test_db`)
+   - Tiempo de espera mejorado (hasta 200 segundos en total)
 
-### Frontend (Next.js)
-- ✅ Build de producción exitoso
-- ✅ package-lock.json generado
-- ✅ Dockerfile optimizado
-- ✅ Configuración de TypeScript
-- ✅ Estilos CSS configurados
+2. **Optimización de Networking**
+   - Cambio a `network_mode: "host"` en docker-compose.test.yml
+   - Eliminación de configuraciones de red innecesarias
+   - Conexión directa a localhost:1433 para SQL Server
 
-### CI/CD Pipeline
-- ✅ Workflow de GitHub Actions completo
-- ✅ Jobs para build, test, security scan
-- ✅ Docker build y push a registry
-- ✅ Deployment automático a staging/prod
-- ✅ Manejo de nombres únicos de contenedores
-- ✅ Cleanup automático de recursos
+3. **Healthcheck Mejorado**
+   - Creación de script `healthcheck.sh` reutilizable
+   - Validación más robusta de servicios
+   - Mejor logging y feedback durante los tests
 
-### Infraestructura
-- ✅ Docker Compose para dev y test
-- ✅ Scripts de desarrollo (Windows/Linux)
-- ✅ Configuración de redes y volumes
-- ✅ Variables de entorno configuradas
+4. **Cleanup Automático**
+   - Limpieza garantizada de contenedores SQL Server
+   - Uso de `if: always()` para ejecutar cleanup incluso si hay errores
+   - Eliminación de contenedores con nombres únicos
+
+## 📋 Estructura del Pipeline Actualizada
+
+```
+├── Build & Test (Backend/Frontend en paralelo)
+├── Security Scan (en paralelo, no bloqueante)
+├── Build Docker Images (Backend/Frontend en paralelo)
+├── Integration Tests (con SQL Server standalone)
+├── Deploy to Staging (solo en develop/main)
+├── Deploy to Production (solo en main)
+└── Cleanup (siempre se ejecuta)
+```
+
+## 🔧 Configuración Actual
+
+### Integration Tests
+- **SQL Server**: Contenedor standalone con configuración optimizada
+- **Database**: `temperatura_test_db` creada automáticamente
+- **Networking**: Host mode para mejor conectividad
+- **Healthchecks**: Script personalizado con reintentos inteligentes
+- **Cleanup**: Automático con `if: always()`
+
+### Docker Images
+- **Backend**: `jasonhermida/temperatura-backend:latest`
+- **Frontend**: `jasonhermida/temperatura-frontend:latest`
+- **Registry**: Docker Hub (configurable via secrets)
+
+### Environments
+- **Development**: Local con docker-compose.dev.yml
+- **Testing**: GitHub Actions con docker-compose.test.yml
+- **Staging**: Despliegue automático desde develop
+- **Production**: Despliegue automático desde main
 
 ## 🎯 Próximos Pasos
 
-### 1. Configurar Repositorio GitHub
-```bash
-# Inicializar Git
-git init
+1. **Verificar Ejecución**: Confirmar que el pipeline se ejecuta exitosamente
+2. **Configurar Secrets**: Añadir DOCKER_USERNAME y DOCKER_PASSWORD en GitHub
+3. **Validar Despliegues**: Verificar que staging y production funcionen
+4. **Monitoreo**: Implementar métricas y alertas (opcional)
 
-# Agregar archivos
-git add .
+## 🔍 Troubleshooting
 
-# Commit inicial
-git commit -m "Initial commit: CI/CD pipeline setup"
+### Si los Integration Tests fallan:
+1. Verificar que SQL Server esté corriendo (logs en GitHub Actions)
+2. Confirmar que la base de datos `temperatura_test_db` se creó
+3. Revisar conectividad de red (localhost:1433)
+4. Validar que los healthchecks respondan correctamente
 
-# Conectar con GitHub
+### Si Docker Push falla:
+1. Verificar que los secrets estén configurados
+2. Confirmar permisos de Docker Hub
+3. Revisar formato de tags de imagen
+
+## 📊 Métricas del Pipeline
+
+- **Tiempo estimado**: 8-12 minutos
+- **Jobs paralelos**: 4 (Build Backend, Build Frontend, Security Scan, Docker Images)
+- **Reintentos**: 10 intentos por healthcheck
+- **Timeout**: 200 segundos máximo para SQL Server
+
+---
+
+**Fecha**: Diciembre 2024
+**Rama**: develop
+**Último commit**: ed0cce6
+**Estado**: ✅ Listo para testing
 git remote add origin https://github.com/TU_USUARIO/temperatura-crud-actions.git
 
 # Subir al repositorio
