@@ -17,6 +17,7 @@
 - [x] Generación de package-lock.json (frontend)
 - [x] Verificación de builds locales (backend y frontend)
 - [x] Configuración de reportes JUnit en workflow
+- [x] Fixes de integración: SQL Server setup y networking optimizado
 
 ## 🚧 Listo para Pruebas
 
