@@ -1,0 +1,525 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Ejecutar cada 2 horas como alternativa al polling
+    - cron: '0 */2 * * *'
+
+env:
+  DOCKER_BACKEND_IMAGE: jasonhermida/temperatura-backend
+  DOCKER_FRONTEND_IMAGE: jasonhermida/temperatura-frontend
+  JAVA_VERSION: '17'
+  NODE_VERSION: '18'
+
+jobs:
+  build-backend:
+    runs-on: ubuntu-latest
+    name: Build Backend
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Cache Maven dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-m2
+        
+    - name: Build Backend
+      working-directory: ./backend
+      run: |
+        echo "Building Spring Boot Backend with Java 17..."
+        java -version
+        javac -version
+        mvn clean compile
+        
+    - name: Run Backend Tests
+      working-directory: ./backend
+      run: |
+        mvn test
+        
+    - name: Package Backend
+      working-directory: ./backend
+      run: |
+        mvn package -DskipTests
+        
+    - name: Upload Backend Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: backend-jar
+        path: backend/target/*.jar
+        
+    - name: Publish Test Results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Backend Tests
+        path: backend/target/surefire-reports/*.xml
+        reporter: java-junit
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    name: Build Frontend
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+        
+    - name: Install Frontend Dependencies
+      working-directory: ./frontend
+      run: |
+        npm ci
+        
+    - name: Lint Frontend
+      working-directory: ./frontend
+      run: |
+        npm run lint || true
+        
+    - name: Build Frontend
+      working-directory: ./frontend
+      run: |
+        npm run build
+        
+    - name: Upload Frontend Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: frontend-build
+        path: frontend/.next/
+
+  security-scan:
+    runs-on: ubuntu-latest
+    name: Security Scan
+    needs: [build-backend, build-frontend]
+    
+    strategy:
+      matrix:
+        component: [backend, frontend]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17 (for backend)
+      if: matrix.component == 'backend'
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+        
+    - name: Set up Node.js (for frontend)
+      if: matrix.component == 'frontend'
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+        
+    - name: Backend Security Scan
+      if: matrix.component == 'backend'
+      working-directory: ./backend
+      run: |
+        mvn org.owasp:dependency-check-maven:check || true
+        
+    - name: Frontend Security Scan
+      if: matrix.component == 'frontend'
+      working-directory: ./frontend
+      run: |
+        npm ci
+        npm audit --audit-level=high || true
+
+  build-docker-images:
+    runs-on: ubuntu-latest
+    name: Build Docker Images
+    needs: [build-backend, build-frontend, security-scan]
+    
+    strategy:
+      matrix:
+        component: [backend, frontend]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Download Backend Artifacts
+      if: matrix.component == 'backend'
+      uses: actions/download-artifact@v4
+      with:
+        name: backend-jar
+        path: backend/target/
+        
+    - name: Download Frontend Artifacts
+      if: matrix.component == 'frontend'
+      uses: actions/download-artifact@v4
+      with:
+        name: frontend-build
+        path: frontend/.next/
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+        
+    - name: Build and Push Backend Image
+      if: matrix.component == 'backend'
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile
+        push: true
+        tags: |
+          ${{ env.DOCKER_BACKEND_IMAGE }}:${{ github.run_number }}
+          ${{ env.DOCKER_BACKEND_IMAGE }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Build and Push Frontend Image
+      if: matrix.component == 'frontend'
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        push: true
+        tags: |
+          ${{ env.DOCKER_FRONTEND_IMAGE }}:${{ github.run_number }}
+          ${{ env.DOCKER_FRONTEND_IMAGE }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    name: Integration Tests
+    needs: [build-docker-images]
+    
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          SA_PASSWORD: j1s0n2108*
+          MSSQL_PID: Express
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P j1s0n2108* -Q 'SELECT 1'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Compose
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y docker-compose
+        
+    - name: Wait for SQL Server
+      run: |
+        echo "Waiting for SQL Server to be ready..."
+        timeout 60 bash -c 'until docker exec $(docker ps -qf "ancestor=mcr.microsoft.com/mssql/server:2022-latest") /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "SELECT 1"; do sleep 5; done'
+        
+    - name: Run Integration Tests
+      run: |
+        echo "Running Integration Tests..."
+        
+        # Define unique container names using GitHub run ID
+        TEST_COMPOSE_PROJECT="temperatura-test-${{ github.run_id }}"
+        
+        # Clean up any existing containers
+        docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml down --remove-orphans || true
+        docker system prune -f || true
+        
+        # Update images to use latest built versions
+        export DOCKER_BACKEND_IMAGE=${{ env.DOCKER_BACKEND_IMAGE }}:latest
+        export DOCKER_FRONTEND_IMAGE=${{ env.DOCKER_FRONTEND_IMAGE }}:latest
+        export COMPOSE_PROJECT_NAME=$TEST_COMPOSE_PROJECT
+        
+        # Start test containers with unique project name
+        docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml up -d
+        
+        # Wait for services to be ready
+        echo "Waiting for services to be ready..."
+        sleep 60
+        
+        # Check container status
+        docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml ps
+        
+        # Test backend health
+        echo "Testing backend health endpoint..."
+        for i in {1..10}; do
+          echo "Attempt $i to connect to backend..."
+          if curl -f http://localhost:8082/actuator/health; then
+            echo "Backend is healthy!"
+            break
+          fi
+          sleep 10
+        done
+        
+        # Test frontend
+        echo "Testing frontend endpoint..."
+        for i in {1..10}; do
+          echo "Attempt $i to connect to frontend..."
+          if curl -f http://localhost:3001; then
+            echo "Frontend is healthy!"
+            break
+          fi
+          sleep 10
+        done
+        
+        # Clean up
+        docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml down --remove-orphans
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    name: Deploy to Staging
+    needs: [integration-tests]
+    if: github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main'
+    
+    environment:
+      name: staging
+      url: http://localhost:3000
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to Staging
+      run: |
+        echo "Deploying to Staging Environment..."
+        
+        # Define unique container names using GitHub run ID
+        DB_NAME="temperatura-staging-db-${{ github.run_id }}"
+        BACKEND_NAME="temperatura-staging-backend-${{ github.run_id }}"
+        FRONTEND_NAME="temperatura-staging-frontend-${{ github.run_id }}"
+        NETWORK_NAME="temperatura-staging-network-${{ github.run_id }}"
+        
+        # Stop existing staging containers (previous runs)
+        docker stop temperatura-staging-db-* temperatura-staging-backend-* temperatura-staging-frontend-* || true
+        docker rm temperatura-staging-db-* temperatura-staging-backend-* temperatura-staging-frontend-* || true
+        
+        # Remove old networks
+        docker network rm temperatura-staging-network-* || true
+        
+        # Create unique network
+        docker network create $NETWORK_NAME || true
+        
+        # Deploy SQL Server for staging
+        docker run -d --name $DB_NAME \
+          --network $NETWORK_NAME \
+          -e ACCEPT_EULA=Y \
+          -e SA_PASSWORD=j1s0n2108* \
+          -e MSSQL_PID=Express \
+          -p 1434:1433 \
+          mcr.microsoft.com/mssql/server:2022-latest
+        
+        # Wait for database to be ready
+        echo "Waiting for database to be ready..."
+        sleep 30
+        
+        # Deploy backend for staging
+        docker run -d --name $BACKEND_NAME \
+          --network $NETWORK_NAME \
+          -e SPRING_PROFILES_ACTIVE=staging \
+          -e SPRING_DATASOURCE_URL="jdbc:sqlserver://$DB_NAME:1433;databaseName=temperatura_staging_db;encrypt=true;trustServerCertificate=true" \
+          -e SPRING_DATASOURCE_USERNAME=sa \
+          -e SPRING_DATASOURCE_PASSWORD=j1s0n2108* \
+          -e JAVA_OPTS="-Xmx512m -Xms256m" \
+          -p 8081:8081 \
+          ${{ env.DOCKER_BACKEND_IMAGE }}:latest
+        
+        # Deploy frontend for staging
+        docker run -d --name $FRONTEND_NAME \
+          --network $NETWORK_NAME \
+          -p 3000:3000 \
+          ${{ env.DOCKER_FRONTEND_IMAGE }}:latest
+        
+        # Wait for services to be ready
+        echo "Waiting for staging services to be ready..."
+        sleep 45
+        
+        # Health check for staging
+        echo "Performing health check on staging..."
+        for i in {1..10}; do
+          if curl -f http://localhost:8081/actuator/health; then
+            echo "Staging backend is healthy!"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        for i in {1..10}; do
+          if curl -f http://localhost:3000; then
+            echo "Staging frontend is healthy!"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        echo "Staging deployment completed successfully!"
+        
+        # Store container names for cleanup
+        echo "DB_NAME=$DB_NAME" >> $GITHUB_ENV
+        echo "BACKEND_NAME=$BACKEND_NAME" >> $GITHUB_ENV
+        echo "FRONTEND_NAME=$FRONTEND_NAME" >> $GITHUB_ENV
+        echo "NETWORK_NAME=$NETWORK_NAME" >> $GITHUB_ENV
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    name: Deploy to Production
+    needs: [deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    
+    environment:
+      name: production
+      url: http://localhost:3002
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to Production
+      run: |
+        echo "Starting Production Deployment..."
+        
+        # Define unique container names using GitHub run ID
+        DB_NAME="temperatura-production-db-${{ github.run_id }}"
+        BACKEND_NAME="temperatura-production-backend-${{ github.run_id }}"
+        FRONTEND_NAME="temperatura-production-frontend-${{ github.run_id }}"
+        NETWORK_NAME="temperatura-production-network-${{ github.run_id }}"
+        
+        # Stop existing production containers (previous runs)
+        docker stop temperatura-production-db-* temperatura-production-backend-* temperatura-production-frontend-* || true
+        docker rm temperatura-production-db-* temperatura-production-backend-* temperatura-production-frontend-* || true
+        
+        # Remove old networks
+        docker network rm temperatura-production-network-* || true
+        
+        # Create unique network
+        docker network create $NETWORK_NAME || true
+        
+        # Deploy SQL Server for production
+        docker run -d --name $DB_NAME \
+          --network $NETWORK_NAME \
+          -e ACCEPT_EULA=Y \
+          -e SA_PASSWORD=j1s0n2108* \
+          -e MSSQL_PID=Express \
+          -p 1435:1433 \
+          mcr.microsoft.com/mssql/server:2022-latest
+        
+        # Wait for database to be ready
+        echo "Waiting for database to be ready..."
+        sleep 30
+        
+        # Deploy backend for production
+        docker run -d --name $BACKEND_NAME \
+          --network $NETWORK_NAME \
+          -e SPRING_PROFILES_ACTIVE=production \
+          -e SPRING_DATASOURCE_URL="jdbc:sqlserver://$DB_NAME:1433;databaseName=temperatura_db;encrypt=true;trustServerCertificate=true" \
+          -e SPRING_DATASOURCE_USERNAME=sa \
+          -e SPRING_DATASOURCE_PASSWORD=j1s0n2108* \
+          -e JAVA_OPTS="-Xmx1g -Xms512m -XX:+UseG1GC" \
+          -p 8083:8081 \
+          ${{ env.DOCKER_BACKEND_IMAGE }}:latest
+        
+        # Deploy frontend for production
+        docker run -d --name $FRONTEND_NAME \
+          --network $NETWORK_NAME \
+          -p 3002:3000 \
+          ${{ env.DOCKER_FRONTEND_IMAGE }}:latest
+        
+        # Wait for services to be ready
+        echo "Waiting for production services to be ready..."
+        sleep 45
+        
+        # Health check for production
+        echo "Performing health check on production..."
+        for i in {1..10}; do
+          if curl -f http://localhost:8083/actuator/health; then
+            echo "Production backend is healthy!"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        for i in {1..10}; do
+          if curl -f http://localhost:3002; then
+            echo "Production frontend is healthy!"
+            break
+          fi
+          echo "Attempt $i failed, retrying in 10 seconds..."
+          sleep 10
+        done
+        
+        echo "Production deployment completed successfully!"
+        
+        # Store container names for cleanup
+        echo "PROD_DB_NAME=$DB_NAME" >> $GITHUB_ENV
+        echo "PROD_BACKEND_NAME=$BACKEND_NAME" >> $GITHUB_ENV
+        echo "PROD_FRONTEND_NAME=$FRONTEND_NAME" >> $GITHUB_ENV
+        echo "PROD_NETWORK_NAME=$NETWORK_NAME" >> $GITHUB_ENV
+
+  cleanup:
+    runs-on: ubuntu-latest
+    name: Cleanup
+    needs: [deploy-production]
+    if: always()
+    
+    steps:
+    - name: Cleanup Docker Images and Containers
+      run: |
+        echo "Cleaning up Docker resources..."
+        
+        # Clean up test containers
+        docker-compose -p temperatura-test-${{ github.run_id }} -f docker-compose.test.yml down --remove-orphans || true
+        
+        # Clean up staging containers if they exist
+        docker stop temperatura-staging-db-${{ github.run_id }} temperatura-staging-backend-${{ github.run_id }} temperatura-staging-frontend-${{ github.run_id }} || true
+        docker rm temperatura-staging-db-${{ github.run_id }} temperatura-staging-backend-${{ github.run_id }} temperatura-staging-frontend-${{ github.run_id }} || true
+        docker network rm temperatura-staging-network-${{ github.run_id }} || true
+        
+        # Clean up production containers if they exist
+        docker stop temperatura-production-db-${{ github.run_id }} temperatura-production-backend-${{ github.run_id }} temperatura-production-frontend-${{ github.run_id }} || true
+        docker rm temperatura-production-db-${{ github.run_id }} temperatura-production-backend-${{ github.run_id }} temperatura-production-frontend-${{ github.run_id }} || true
+        docker network rm temperatura-production-network-${{ github.run_id }} || true
+        
+        # Clean up old containers from previous runs (older than 1 day)
+        docker container prune -f --filter "until=24h" || true
+        docker network prune -f --filter "until=24h" || true
+        docker image prune -f --filter "until=24h" || true
+        
+        echo "Cleanup completed!"
+        
+    - name: Cleanup Summary
+      run: |
+        echo "Pipeline execution completed!"
+        echo "Build Number: ${{ github.run_number }}"
+        echo "Commit SHA: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Run ID: ${{ github.run_id }}"

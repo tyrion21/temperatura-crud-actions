@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  temperatura-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: temperatura-db
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=j1s0n2108*
+      - MSSQL_PID=Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'j1s0n2108*' -Q 'SELECT 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  temperatura-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: temperatura-backend
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev
+      - SPRING_DATASOURCE_URL=jdbc:sqlserver://temperatura-db:1433;databaseName=temperatura_db;encrypt=true;trustServerCertificate=true
+      - SPRING_DATASOURCE_USERNAME=sa
+      - SPRING_DATASOURCE_PASSWORD=j1s0n2108*
+      - JAVA_OPTS=-Xmx512m -Xms256m -XX:+UseG1GC
+    depends_on:
+      temperatura-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/target:/app/target
+
+  temperatura-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: temperatura-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8081
+      - NODE_ENV=development
+    depends_on:
+      temperatura-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/pages:/app/pages
+      - ./frontend/styles:/app/styles
+      - ./frontend/public:/app/public
+
+volumes:
+  mssql_data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge
+    name: temperatura-network
