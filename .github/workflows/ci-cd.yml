@@ -293,11 +293,11 @@ jobs:
         ports:
           - 1433:1433
         options: >-
-          --health-cmd="/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'j1s0n2108*' -Q 'SELECT 1'"
+          --health-cmd="timeout 10s bash -c ':> /dev/tcp/127.0.0.1/1433' || exit 1"
           --health-interval=30s
           --health-timeout=10s
-          --health-retries=5
-          --health-start-period=80s
+          --health-retries=10
+          --health-start-period=60s
     
     steps:
     - name: Checkout code
@@ -310,16 +310,38 @@ jobs:
         
     - name: Create test database
       run: |
-        echo "Creating test database..."
-        # Wait a bit more for SQL Server to be fully ready
+        echo "Waiting for SQL Server to be fully ready..."
+        
+        # Wait for SQL Server to be healthy
+        timeout 180 bash -c '
+          while ! timeout 10 bash -c "</dev/tcp/localhost/1433" >/dev/null 2>&1; do
+            echo "Waiting for SQL Server port 1433 to be available..."
+            sleep 5
+          done
+        '
+        
+        # Additional wait for SQL Server to be ready for connections
+        echo "SQL Server port is available, waiting for service to be ready..."
         sleep 30
         
-        # Create the test database
-        docker run --rm --network host mcr.microsoft.com/mssql-tools \
-          /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" \
-          -Q "CREATE DATABASE temperatura_test_db"
+        # Try to create the test database with retries
+        for i in {1..10}; do
+          echo "Attempt $i: Creating test database..."
+          if docker run --rm --network host mcr.microsoft.com/mssql-tools:latest \
+            /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" \
+            -Q "CREATE DATABASE temperatura_test_db" 2>/dev/null; then
+            echo "✅ Test database created successfully"
+            break
+          fi
+          echo "Failed to create database, retrying in 10 seconds..."
+          sleep 10
+        done
         
-        echo "Test database created successfully"
+        # Verify database was created
+        echo "Verifying database creation..."
+        docker run --rm --network host mcr.microsoft.com/mssql-tools:latest \
+          /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" \
+          -Q "SELECT name FROM sys.databases WHERE name = 'temperatura_test_db'"
         
     - name: Run Integration Tests
       run: |
@@ -342,20 +364,30 @@ jobs:
         
         # Wait for services to be ready
         echo "Waiting for services to be ready..."
-        sleep 60
+        sleep 45
         
         # Check container status
+        echo "📊 Checking container status:"
         docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml ps
+        
+        # Check if containers are running
+        echo "📊 Checking individual containers:"
+        docker ps --filter "name=temperatura-backend-$TEST_COMPOSE_PROJECT" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        docker ps --filter "name=temperatura-frontend-$TEST_COMPOSE_PROJECT" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
         
         # Make healthcheck script executable
         chmod +x ./healthcheck.sh
         source ./healthcheck.sh
         
         # Test backend health
+        echo "🔍 Testing backend health..."
         check_service "http://localhost:8082/actuator/health" "Backend"
         
         # Test frontend
+        echo "🔍 Testing frontend health..."
         check_service "http://localhost:3001" "Frontend"
+        
+        echo "✅ Integration tests completed successfully!"
         
         # Clean up
         docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml down --remove-orphans
