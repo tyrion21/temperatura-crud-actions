@@ -3,10 +3,11 @@
 ## 🚀 Últimos Cambios Realizados
 
 ### Problema Identificado
-Los integration tests estaban fallando debido a problemas de conectividad con SQL Server:
+Los integration tests estaban fallando debido a múltiples problemas:
 - GitHub Actions services no funcionaban correctamente con host.docker.internal
 - La configuración de red era compleja e inconsistente
 - Los healthchecks no eran lo suficientemente robustos
+- **Error de sqlcmd**: SQL Server 2022 tiene las herramientas en ubicaciones diferentes
 
 ### Solución Implementada
 
@@ -31,6 +32,11 @@ Los integration tests estaban fallando debido a problemas de conectividad con SQ
    - Uso de `if: always()` para ejecutar cleanup incluso si hay errores
    - Eliminación de contenedores con nombres únicos
 
+5. **Corrección de Herramientas SQL Server**
+   - Cambio de SQL Server 2022 a SQL Server 2019 para mejor compatibilidad
+   - Uso de la ubicación estándar `/opt/mssql-tools/bin/sqlcmd`
+   - Mejor estabilidad en las herramientas de línea de comandos
+
 ## 📋 Estructura del Pipeline Actualizada
 
 ```
@@ -46,7 +52,7 @@ Los integration tests estaban fallando debido a problemas de conectividad con SQ
 ## 🔧 Configuración Actual
 
 ### Integration Tests
-- **SQL Server**: Contenedor standalone con configuración optimizada
+- **SQL Server**: SQL Server 2019 con herramientas estables
 - **Database**: `temperatura_test_db` creada automáticamente
 - **Networking**: Host mode para mejor conectividad
 - **Healthchecks**: Script personalizado con reintentos inteligentes
@@ -92,10 +98,10 @@ Los integration tests estaban fallando debido a problemas de conectividad con SQ
 
 ---
 
-**Fecha**: Diciembre 2024
+**Fecha**: Julio 2025
 **Rama**: develop
-**Último commit**: ed0cce6
-**Estado**: ✅ Listo para testing
+**Último commit**: 39881d4
+**Estado**: ✅ Listo para testing con SQL Server 2019 fix
 git remote add origin https://github.com/TU_USUARIO/temperatura-crud-actions.git
 
 # Subir al repositorio

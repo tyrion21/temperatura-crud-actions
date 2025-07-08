@@ -282,7 +282,22 @@ jobs:
     runs-on: ubuntu-latest
     name: Integration Tests
     needs: [build-docker-images]
-    # Security scan corre en paralelo sin bloquear
+    
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2019-latest
+        env:
+          ACCEPT_EULA: Y
+          SA_PASSWORD: j1s0n2108*
+          MSSQL_PID: Express
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd="/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'j1s0n2108*' -Q 'SELECT 1'"
+          --health-interval=30s
+          --health-timeout=10s
+          --health-retries=5
+          --health-start-period=80s
     
     steps:
     - name: Checkout code
@@ -293,30 +308,18 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y docker-compose
         
-    - name: Start SQL Server for tests
+    - name: Create test database
       run: |
-        echo "Starting SQL Server for integration tests..."
-        docker run -d \
-          --name mssql-integration \
-          -e ACCEPT_EULA=Y \
-          -e SA_PASSWORD=j1s0n2108* \
-          -e MSSQL_PID=Express \
-          -p 1433:1433 \
-          mcr.microsoft.com/mssql/server:2019-latest
+        echo "Creating test database..."
+        # Wait a bit more for SQL Server to be fully ready
+        sleep 30
         
-        # Wait for SQL Server to be ready
-        echo "Waiting for SQL Server to be ready..."
-        for i in {1..20}; do
-          if docker exec mssql-integration /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "SELECT 1" > /dev/null 2>&1; then
-            echo "SQL Server is ready!"
-            break
-          fi
-          echo "Waiting for SQL Server... attempt $i/20"
-          sleep 10
-        done
+        # Create the test database
+        docker run --rm --network host mcr.microsoft.com/mssql-tools \
+          /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" \
+          -Q "CREATE DATABASE temperatura_test_db"
         
-        # Create test database
-        docker exec mssql-integration /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "j1s0n2108*" -Q "CREATE DATABASE temperatura_test_db"
+        echo "Test database created successfully"
         
     - name: Run Integration Tests
       run: |
@@ -356,13 +359,6 @@ jobs:
         
         # Clean up
         docker-compose -p $TEST_COMPOSE_PROJECT -f docker-compose.test.yml down --remove-orphans
-        
-    - name: Cleanup SQL Server
-      if: always()
-      run: |
-        echo "Cleaning up SQL Server..."
-        docker stop mssql-integration || true
-        docker rm mssql-integration || true
 
   deploy-staging:
     runs-on: ubuntu-latest

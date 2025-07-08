@@ -18,6 +18,7 @@
 - [x] Verificación de builds locales (backend y frontend)
 - [x] Configuración de reportes JUnit en workflow
 - [x] Fixes de integración: SQL Server setup y networking optimizado
+- [x] Corrección de rutas de sqlcmd en SQL Server 2019
 
 ## 🚧 Listo para Pruebas
 
